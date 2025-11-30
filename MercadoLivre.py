@@ -6,27 +6,31 @@ from urllib.parse import urlparse, parse_qs
 import pandas as pd
 import os
 
-
+#abre o navegador e acessa o ML
 driver = webdriver.Chrome()
 driver.get("https://www.mercadolivre.com.br/")
-
+#clica no botao de ofertas
 botao_ofertas = driver.find_element(By.CLASS_NAME, "nav-menu-item-link")
 botao_ofertas.click()
 time.sleep(2)
+#faz um scroll
 driver.execute_script("window.scrollTo(0, 800);")
 time.sleep(4)
+#seleciona o filtro de preco menor e digita 100
 seletor_minimo = driver.find_element(By.XPATH, '//*[@id="min_input"]')
 seletor_minimo.click()
 time.sleep(1)
 seletor_minimo.clear()
 seletor_minimo.send_keys("100")
 time.sleep(2)
+#seleciona o maior e digita 150
 seletor_maximo = driver.find_element(By.XPATH, '//*[@id="max_input"]')
 seletor_maximo.click()
 time.sleep(1)
 seletor_maximo.clear()
 seletor_maximo.send_keys("150")
 time.sleep(2)
+#clica no botao de filtrar
 botao_filtrar = driver.find_element(By.XPATH, '//*[@id="root-app"]/div/section/div[1]/aside/section[4]/div/button')
 botao_filtrar.click()
 time.sleep(2)
