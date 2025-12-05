@@ -1,237 +1,134 @@
 from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import time
 import pandas as pd
 import os
 
-# ==============================
-# CONFIGURAÇÃO DO NAVEGADOR
-# ==============================
-options = webdriver.ChromeOptions()
-# Se der problema com Wayland, você pode testar:
-# options.add_argument("--ozone-platform=wayland")
-# options.add_argument("--enable-features=UseOzonePlatform")
+# --- CONFIGURAÇÕES ---
+# Quero pegar bastante coisa para garantir que apareçam os baratos
+MAX_PRODUTOS_DESEJADOS = 200  
+PRECO_MIN = 0.00    # Começando do ZERO
+PRECO_MAX = 150.00  # Até 150 reais
 
+# Inicializa as listas
+produtos_filtrados = []
+links_visitados = set()
+
+# Configura o navegador
+options = webdriver.ChromeOptions()
+options.add_argument("--start-maximized")
 driver = webdriver.Chrome(options=options)
 
-# Hyprland: garante uma janela "decente"
-driver.set_window_size(1400, 900)
-driver.set_window_position(0, 0)
-
-wait = WebDriverWait(driver, 20)
-
-# ==============================
-# ABRIR KABUM E IR PARA OFERTAS
-# ==============================
-driver.get("https://www.kabum.com.br/")
-time.sleep(2)
-
-# (Opcional) Tentar fechar banner de cookies se aparecer
 try:
-    botao_cookies = WebDriverWait(driver, 5).until(
-        EC.element_to_be_clickable(
-            (By.XPATH, '//*[@id="header-container"]/header/div/div[2]/div[2]/div/div[2]/div[2]/a[1]')
-        )
-    )
-    botao_cookies.click()
-    time.sleep(1)
-except:
-    pass  # se não tiver banner, segue o jogo
+    print("--- Acessando KaBuM (Mais Vendidos) ---")
+    driver.get("https://www.kabum.com.br/promocao/maisvendidos")
+    time.sleep(5) # Espera carregar bem a página
 
-# Clicar no link de ofertas
-botao_ofertas = wait.until(
-    EC.element_to_be_clickable(
-        (By.XPATH, '//a[contains(@href, "/ofertas")]')
-    )
-)
-botao_ofertas.click()
-time.sleep(3)
+    print(f"Buscando QUALQUER PRODUTO de R$ {PRECO_MIN:.2f} até R$ {PRECO_MAX:.2f}...")
 
-# ==============================
-# APLICAR FILTRO DE PREÇO 100–150
-# ==============================
+    # Controle de Scroll
+    scroll_atual = 0
+    altura_scroll = 800  
 
-# Campo mínimo
-seletor_minimo = wait.until(
-    EC.presence_of_element_located((By.ID, "minPrice"))
-)
+    # Loop principal
+    while len(produtos_filtrados) < MAX_PRODUTOS_DESEJADOS:
+        
+        # Pega todos os cards visíveis na tela
+        # Usando a classe 'productCard' que é padrão do KaBuM
+        cards = driver.find_elements(By.CLASS_NAME, "productCard")
+        
+        # Feedback visual no terminal
+        print(f"Processando tela... (Total coletado: {len(produtos_filtrados)})")
 
-# Scroll suave até o campo (evita flick no Hyprland)
-driver.execute_script(
-    "arguments[0].scrollIntoView({block: 'center'});", seletor_minimo
-)
-time.sleep(1)
+        for card in cards:
+            # Se já batemos a meta, para
+            if len(produtos_filtrados) >= MAX_PRODUTOS_DESEJADOS:
+                break
 
-seletor_minimo.click()
-seletor_minimo.clear()
-seletor_minimo.send_keys("100")
-time.sleep(1)
+            try:
+                # 1. PEGAR O LINK (Identificador único)
+                try:
+                    elem_link = card.find_element(By.TAG_NAME, "a")
+                    link = elem_link.get_attribute("href")
+                except:
+                    continue 
 
-# Campo máximo
-seletor_maximo = wait.until(
-    EC.presence_of_element_located((By.ID, "maxPrice"))
-)
-driver.execute_script(
-    "arguments[0].scrollIntoView({block: 'center'});", seletor_maximo
-)
-time.sleep(1)
+                # Evita duplicados
+                if link in links_visitados:
+                    continue
+                
+                links_visitados.add(link)
 
-seletor_maximo.click()
-seletor_maximo.clear()
-seletor_maximo.send_keys("150")
-time.sleep(1)
+                # 2. PEGAR O PREÇO
+                try:
+                    # Tenta pela classe específica 'priceCard'
+                    preco_elem = card.find_element(By.CLASS_NAME, "priceCard")
+                    preco_texto = preco_elem.text
+                    
+                    # Limpeza: tira R$, espaços invisíveis, etc
+                    preco_limpo = preco_texto.replace("R$", "").replace("\u00a0", "").strip()
+                    # Converte formato BR (1.000,00) para Python (1000.00)
+                    preco_limpo = preco_limpo.replace(".", "").replace(",", ".")
+                    preco_num = float(preco_limpo)
+                except:
+                    # Se não tiver preço (ex: esgotado), ignora
+                    continue
 
-# Aplica o filtro (Kabum geralmente aplica ao perder o foco)
-seletor_maximo.send_keys(Keys.TAB)
-time.sleep(3)
+                # 3. FILTRO DE PREÇO (0 a 150)
+                if preco_num > PRECO_MAX:
+                    # print(f"Ignorado (Caro): R$ {preco_num}") # Comentado para limpar o terminal
+                    continue
+                
+                # Aceita qualquer coisa maior ou igual a 0
+                if preco_num >= PRECO_MIN:
+                    
+                    # Pega o título só agora, para economizar processamento
+                    try:
+                        titulo = card.find_element(By.CLASS_NAME, "nameCard").text
+                    except:
+                        titulo = "Produto sem Nome"
 
-# ==============================
-# COLETAR PRODUTOS (PRIMEIRA PÁGINA)
-# ==============================
+                    # Adiciona na lista final
+                    produtos_filtrados.append({
+                        "titulo": titulo,
+                        "preco": f"{preco_num:.2f}".replace(".", ","), # Salva formatado bonito
+                        "link": link
+                    })
+                    
+                    # Mostra no terminal
+                    print(f"✅ R$ {preco_num:.2f} - {titulo[:40]}...")
 
-MAX_PRODUTOS = 300
-produtos_encontrados = []
-
-# Tenta pegar os cards de produto
-# IMPORTANTE: se esse seletor não bater, abra o Kabum, inspecione um card,
-# veja algum atributo padrão (ex: data-testid, class) e ajuste aqui.
-cards = wait.until(
-    EC.presence_of_all_elements_located(
-        (By.CSS_SELECTOR, '[data-testid="product-card"], div[data-sku]')
-    )
-)
-
-for card in cards:
-    if len(produtos_encontrados) >= MAX_PRODUTOS:
-        break
-
-    try:
-        # ---------- TÍTULO ----------
-        try:
-            # AJUSTAR SELETOR se necessário
-            titulo = card.find_element(
-                By.CSS_SELECTOR,
-                '[data-testid="product-card-name"], h2, h3'
-            ).text.strip()
-        except:
-            titulo = card.text.split("\n")[0].strip() or None
-
-        # ---------- PREÇO ATUAL ----------
-        try:
-            # AJUSTAR SELETOR se necessário
-            preco_texto = card.find_element(
-                By.CSS_SELECTOR,
-                '[data-testid="product-card-price"], span'
-            ).text
-
-            # normalizar número (tenta transformar em algo tipo "123,45")
-            # e guardar como string mesmo (igual ML)
-            # Kabum costuma usar "R$ 123,45"
-            preco_limpo = preco_texto.replace("R$", "").strip()
-            preco_atual = preco_limpo
-        except:
-            preco_atual = None
-
-        # ---------- PREÇO ANTERIOR (NEM SEMPRE TEM) ----------
-        try:
-            # AJUSTAR SELETOR se necessário
-            preco_ant_texto = card.find_element(
-                By.XPATH,
-                ".//*[contains(text(), 'De:') or contains(text(), 'R$')]"
-            ).text
-            # aqui dá pra refinar igual acima, se você quiser
-            preco_anterior = preco_ant_texto
-        except:
-            preco_anterior = None
-
-        # ---------- DESCONTO / PARCELAMENTO / FRETE ----------
-        # Essas infos variam muito de layout pra layout, então deixei
-        # tentativas genéricas. Você pode ir refinando depois no inspecionar.
-        try:
-            desconto = card.find_element(
-                By.XPATH,
-                ".//*[contains(text(), '%')]"
-            ).text.strip()
-        except:
-            desconto = None
-
-        try:
-            parcelamento = card.find_element(
-                By.XPATH,
-                ".//*[contains(text(), 'x ')]"
-            ).text.strip()
-        except:
-            parcelamento = None
-
-        try:
-            frete = card.find_element(
-                By.XPATH,
-                ".//*[contains(text(), 'Frete') or contains(text(), 'grátis')]"
-            ).text.strip()
-        except:
-            frete = None
-
-        # ---------- LINK ----------
-        try:
-            link = card.find_element(By.TAG_NAME, "a").get_attribute("href")
-        except:
-            link = None
-
-        # ---------- IMAGEM ----------
-        try:
-            imagem = card.find_element(By.TAG_NAME, "img").get_attribute("src")
-        except:
-            imagem = None
-
-        # Se quiser garantir só preços entre 100 e 150 mesmo:
-        try:
-            valor_num = float(
-                preco_atual.replace(".", "").replace(",", ".")
-            )
-            if not (100 <= valor_num <= 150):
-                # pula se sair da faixa
+            except Exception:
                 continue
-        except:
-            # se não conseguir converter, deixa passar
-            pass
 
-        produtos_encontrados.append({
-            "titulo": titulo,
-            "preco_atual": preco_atual,
-            "preco_anterior": preco_anterior,
-            "desconto": desconto,
-            "parcelamento": parcelamento,
-            "frete": frete,
-            "link": link,
-            "imagem": imagem
-        })
+        # 4. ROLAGEM DE PÁGINA (SCROLL)
+        driver.execute_script(f"window.scrollTo(0, {scroll_atual + altura_scroll});")
+        scroll_atual += altura_scroll
+        time.sleep(2) # Pausa importante para carregar itens novos
+        
+        # Verifica se a página acabou
+        altura_total = driver.execute_script("return document.body.scrollHeight")
+        if scroll_atual > altura_total:
+            print("--- Fim da página alcançado ---")
+            break
 
-    except Exception as e:
-        print("Erro extraindo um produto:", e)
-        continue
+except Exception as e:
+    print(f"Erro inesperado: {e}")
 
-print("Total coletado na primeira página:", len(produtos_encontrados))
+finally:
+    driver.quit()
 
-# ==============================
-# SALVAR EM EXCEL
-# ==============================
-df = pd.DataFrame(produtos_encontrados, columns=[
-    "titulo",
-    "preco_atual",
-    "preco_anterior",
-    "desconto",
-    "parcelamento",
-    "frete",
-    "link",
-    "imagem"
-])
-
-output_path = os.path.join(os.getcwd(), "produtos_kabum.xlsx")
-df.to_excel(output_path, index=False)
-
-print(f"Arquivo salvo em: {output_path}")
-
-driver.quit()
+# SALVAR ARQUIVO
+if produtos_filtrados:
+    df = pd.DataFrame(produtos_filtrados)
+    
+    # Nome do arquivo ajustado
+    output_path = os.path.join(os.getcwd(), "kabum_0_a_150_completo.xlsx")
+    df.to_excel(output_path, index=False)
+    
+    print("\n" + "="*40)
+    print(f"CONCLUÍDO! Coletados {len(produtos_filtrados)} produtos.")
+    print(f"Arquivo salvo em: {output_path}")
+    print("="*40)
+else:
+    print("\nNenhum produto encontrado. O site pode ter mudado o layout ou demorou para carregar.")
